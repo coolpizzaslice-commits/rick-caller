@@ -1,0 +1,407 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Mom Caller">
+  <meta name="theme-color" content="#0b1020">
+  <link rel="apple-touch-icon" href="mom-icon.png">
+  <title>Mom Caller</title>
+  <!--
+    Rick's side of Rick Caller. Shows Mom's messages (last 12 hours) and lets Rick reply.
+    Notifications still come from the ntfy app; this page is for reading and replying.
+    NTFY_TOPIC must match the one in rick-caller-source/rick-template.html.
+  -->
+  <style>
+    :root {
+      --bg: #0b1020;
+      --glass: rgba(255, 255, 255, 0.08);
+      --stroke: rgba(255, 255, 255, 0.13);
+      --text: #fff;
+      --muted: rgba(255, 255, 255, 0.62);
+      --green: #34c759;
+      --red: #ff3b30;
+      --pink: linear-gradient(135deg, #ec4899, #a855f7);
+      --blue: linear-gradient(135deg, #3b82f6, #6366f1);
+      --ease: cubic-bezier(0.22, 1, 0.36, 1);
+      --spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+      --safe-top: env(safe-area-inset-top, 0px);
+      --safe-bottom: env(safe-area-inset-bottom, 0px);
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+    html, body {
+      height: 100%;
+      overflow: hidden;
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", system-ui, sans-serif;
+      -webkit-font-smoothing: antialiased;
+    }
+    button, input { font: inherit; color: inherit; }
+    button { border: none; background: none; cursor: pointer; }
+    .glass {
+      background: linear-gradient(160deg, rgba(255, 255, 255, 0.11), rgba(255, 255, 255, 0.05));
+      border: 1px solid var(--stroke);
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.16), 0 10px 30px rgba(0, 0, 0, 0.18);
+      backdrop-filter: blur(24px) saturate(1.5);
+      -webkit-backdrop-filter: blur(24px) saturate(1.5);
+    }
+    @keyframes fadeUp { from { opacity: 0; transform: translateY(14px) scale(0.96); } }
+
+    .bg { position: fixed; inset: 0; overflow: hidden; z-index: 0; }
+    .blob { position: absolute; border-radius: 50%; filter: blur(70px); opacity: 0.55; will-change: transform; }
+    .b1 { width: 70vmax; height: 70vmax; background: #db2777; top: -30vmax; left: -25vmax; animation: d1 18s ease-in-out infinite alternate; }
+    .b2 { width: 70vmax; height: 70vmax; background: #7c3aed; bottom: -35vmax; right: -30vmax; animation: d2 22s ease-in-out infinite alternate; }
+    .b3 { width: 45vmax; height: 45vmax; background: #0ea5e9; top: 35%; left: 45%; opacity: 0.25; animation: d3 26s ease-in-out infinite alternate; }
+    @keyframes d1 { to { transform: translate(12vmax, 10vmax) scale(1.1); } }
+    @keyframes d2 { to { transform: translate(-10vmax, -12vmax) scale(1.15); } }
+    @keyframes d3 { to { transform: translate(-20vmax, 8vmax) scale(0.9); } }
+    body.urgent .b1 { background: #dc2626; transition: background 1s; }
+
+    .app { position: relative; z-index: 1; height: 100%; max-width: 520px; margin: 0 auto; display: flex; flex-direction: column; }
+
+    /* Header with Mom */
+    header {
+      display: flex; align-items: center; gap: 14px;
+      padding: calc(var(--safe-top) + 14px) 18px 14px;
+      border-bottom: 1px solid var(--stroke);
+      background: rgba(14, 18, 40, 0.45);
+      backdrop-filter: blur(26px) saturate(1.6);
+      -webkit-backdrop-filter: blur(26px) saturate(1.6);
+    }
+    .mom-wrap { position: relative; width: 64px; height: 64px; flex-shrink: 0; }
+    .mom-wrap::before {
+      content: ""; position: absolute; inset: -4px; border-radius: 50%;
+      background: conic-gradient(from var(--a, 0deg), #f472b6, #c084fc, #38bdf8, #f472b6);
+      -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 2px));
+      mask: radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 2px));
+      animation: spinRing 6s linear infinite;
+    }
+    @property --a { syntax: "<angle>"; initial-value: 0deg; inherits: false; }
+    @keyframes spinRing { to { --a: 360deg; } }
+    .mom {
+      position: absolute; inset: 0; border-radius: 50%;
+      background: #fff; display: grid; place-items: center;
+      font-size: 40px; line-height: 1;
+      animation: momIdle 4s ease-in-out infinite;
+    }
+    @keyframes momIdle { 50% { transform: translateY(-2px) rotate(-3deg); } }
+    .mom.bounce { animation: momBounce 0.8s var(--spring); }
+    @keyframes momBounce { 30% { transform: translateY(-10px) scale(1.12) rotate(6deg); } 60% { transform: translateY(0) scale(0.95) rotate(-4deg); } }
+    .mom.shake { animation: momShake 0.6s ease-in-out 2; }
+    @keyframes momShake { 20%, 60% { transform: translateX(-5px) rotate(-6deg); } 40%, 80% { transform: translateX(5px) rotate(6deg); } }
+    .who strong { display: block; font-size: 22px; font-weight: 800; letter-spacing: -0.4px; }
+    .who span { font-size: 14px; color: var(--muted); }
+    .live { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--muted); margin-right: 6px; vertical-align: 1px; transition: background 0.3s; }
+    .live.on { background: var(--green); box-shadow: 0 0 8px var(--green); }
+
+    /* Chat */
+    .chat { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; padding: 14px 16px 10px; display: flex; flex-direction: column; gap: 4px; }
+    .stamp { text-align: center; font-size: 12px; font-weight: 600; color: var(--muted); margin: 14px 0 6px; }
+    .row { display: flex; animation: fadeUp 0.45s var(--ease) backwards; }
+    .row.rick { justify-content: flex-end; }
+    .row.gap { margin-top: 10px; }
+    .bubble { max-width: 80%; padding: 10px 15px; border-radius: 20px; font-size: 17px; line-height: 1.35; overflow-wrap: anywhere; }
+    .mom-msg .bubble { background: rgba(255, 255, 255, 0.14); border: 1px solid var(--stroke); border-bottom-left-radius: 6px; }
+    .mom-msg.urgent .bubble { background: linear-gradient(135deg, #ff3b30, #ff6a3d); border-color: rgba(255, 255, 255, 0.3); box-shadow: 0 10px 30px rgba(255, 59, 48, 0.4); }
+    .rick .bubble { background: var(--blue); border-bottom-right-radius: 6px; }
+    .bubble small { display: block; font-size: 12px; font-weight: 700; opacity: 0.75; margin-bottom: 2px; letter-spacing: 0.3px; }
+    .bubble .act {
+      display: inline-flex; align-items: center; gap: 6px;
+      margin-top: 8px; padding: 7px 12px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.2);
+      font-size: 15px; font-weight: 700;
+      text-decoration: none; color: inherit;
+    }
+    .bubble .act:active { transform: scale(0.95); }
+    .empty { margin: auto; text-align: center; color: var(--muted); font-size: 16px; line-height: 1.5; padding: 30px; }
+    .empty .big { font-size: 50px; margin-bottom: 8px; }
+
+    /* Reply area */
+    .reply { padding: 8px 12px calc(var(--safe-bottom) + 12px); }
+    .quick { display: flex; gap: 8px; overflow-x: auto; padding: 4px 2px 10px; scrollbar-width: none; }
+    .quick::-webkit-scrollbar { display: none; }
+    .chip {
+      flex-shrink: 0;
+      padding: 9px 14px;
+      border-radius: 999px;
+      font-size: 15px; font-weight: 600; white-space: nowrap;
+      transition: transform 0.25s var(--spring);
+    }
+    .chip:active { transform: scale(0.92); }
+    .compose { display: flex; gap: 10px; padding: 6px 6px 6px 18px; border-radius: 999px; }
+    .compose input { flex: 1; min-width: 0; background: none; border: none; outline: none; font-size: 17px; }
+    .compose input::placeholder { color: var(--muted); }
+    .send {
+      width: 44px; height: 44px; flex-shrink: 0; border-radius: 50%;
+      background: var(--green); display: grid; place-items: center;
+      opacity: 0.4; transform: scale(0.85);
+      transition: opacity 0.25s, transform 0.4s var(--spring);
+    }
+    .send.ready { opacity: 1; transform: none; }
+    .send svg { width: 20px; height: 20px; }
+    .note { text-align: center; color: var(--muted); font-size: 12px; margin-top: 8px; }
+
+    .toast {
+      position: fixed; z-index: 10; left: 50%; top: calc(var(--safe-top) + 90px);
+      width: max-content; max-width: calc(100vw - 32px);
+      padding: 10px 16px; border-radius: 16px;
+      background: rgba(28, 28, 52, 0.85); font-size: 15px; font-weight: 700;
+      transform: translate(-50%, -20px); opacity: 0;
+      transition: transform 0.4s var(--spring), opacity 0.3s;
+      pointer-events: none;
+    }
+    .toast.show { transform: translate(-50%, 0); opacity: 1; }
+
+    .confetti { position: fixed; z-index: 20; top: -20px; width: 9px; height: 14px; border-radius: 2px; pointer-events: none; animation: fall var(--dur, 3s) linear forwards; }
+    @keyframes fall { to { transform: translate(var(--dx), 110vh) rotate(var(--spin)); } }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; }
+    }
+  </style>
+</head>
+<body>
+  <div class="bg"><span class="blob b1"></span><span class="blob b2"></span><span class="blob b3"></span></div>
+
+  <div class="app">
+    <header>
+      <div class="mom-wrap"><div class="mom" id="mom">👩🏻</div></div>
+      <div class="who">
+        <strong id="momName">Mom</strong>
+        <span><i class="live" id="live"></i><span id="status">Connecting…</span></span>
+      </div>
+    </header>
+
+    <main class="chat" id="chat"></main>
+
+    <div class="reply">
+      <div class="quick" id="quick"></div>
+      <form class="compose glass" id="compose" autocomplete="off">
+        <input id="text" type="text" placeholder="Reply to Mom…" enterkeyhint="send" maxlength="300">
+        <button class="send" id="send" type="submit" aria-label="Send">
+          <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
+        </button>
+      </form>
+      <p class="note">Notifications still come from the ntfy app.</p>
+    </div>
+  </div>
+
+  <div class="toast glass" id="toast"></div>
+
+  <script>
+    // ===== SETTINGS (keep NTFY_TOPIC the same as in Mom's app) =====
+    const NTFY_TOPIC = "rick-caller-m7q4x9tz2k";
+    const REPLY_TOPIC = NTFY_TOPIC + "-reply";
+    const MOM_NAME = "Mom";
+    const MOM_BIRTHDAY = { month: 10, day: 5 };   // keep the same as in Mom's app
+    const RICK_BIRTHDAY = { month: 4, day: 29 };
+    // Quick replies. "Sending one back" makes Mom's phone fart back!
+    const QUICK = ["On my way", "Calling you now", "Give me a few minutes", "On it", "Love you too", "LOL", "Not right now", "Sending one back"];
+    const QUICK_EMOJI = { "On my way": "🚗", "Calling you now": "📞", "Give me a few minutes": "⏳", "On it": "👍",
+      "Love you too": "❤️", "LOL": "😂", "Not right now": "🙏", "Sending one back": "💨" };
+    // ntfy tag names Mom's app uses -> emoji
+    const TAG_EMOJI = { rotating_light: "🚨", telephone_receiver: "📞", iphone: "📱", shopping_cart: "🛒", muscle: "💪",
+      car: "🚗", spaghetti: "🍝", house: "🏠", heart: "❤️", dash: "💨", speech_balloon: "💬", round_pushpin: "📍", wave: "👋" };
+
+    const $ = (id) => document.getElementById(id);
+    const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
+    $("momName").textContent = MOM_NAME;
+
+    // ----- sounds (made in code) -----
+    let audio = null;
+    function unlockAudio() {
+      try { if (!audio) audio = new (window.AudioContext || window.webkitAudioContext)(); if (audio.state === "suspended") audio.resume(); } catch (e) {}
+    }
+    document.addEventListener("pointerdown", unlockAudio, { passive: true });
+    function chime(notes) {
+      if (!audio || audio.state !== "running") return;
+      const t0 = audio.currentTime + 0.02;
+      notes.forEach(([f, d]) => {
+        const o = audio.createOscillator(), g = audio.createGain();
+        o.type = "sine"; o.frequency.value = f;
+        g.gain.setValueAtTime(0, t0 + d); g.gain.linearRampToValueAtTime(0.12, t0 + d + 0.02);
+        g.gain.exponentialRampToValueAtTime(0.0001, t0 + d + 0.6);
+        o.connect(g).connect(audio.destination); o.start(t0 + d); o.stop(t0 + d + 0.65);
+      });
+    }
+
+    function momFx(cls) {
+      const m = $("mom");
+      m.classList.remove("bounce", "shake"); void m.offsetWidth; m.classList.add(cls);
+      setTimeout(() => m.classList.remove(cls), 1400);
+    }
+
+    let toastTimer = null;
+    function toast(text, ms = 2200) {
+      const t = $("toast"); t.textContent = text; t.classList.add("show");
+      clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove("show"), ms);
+    }
+
+    function confetti(count = 100) {
+      const colors = ["#ff3b30", "#ff9f0a", "#ffd60a", "#34c759", "#5ac8fa", "#bf5af2", "#ff2d55", "#ffffff"];
+      for (let i = 0; i < count; i++) {
+        const c = el("span", "confetti");
+        c.style.left = Math.random() * 100 + "%";
+        c.style.background = colors[i % colors.length];
+        c.style.setProperty("--dx", (Math.random() * 160 - 80) + "px");
+        c.style.setProperty("--spin", (Math.random() * 1080 - 540) + "deg");
+        c.style.setProperty("--dur", 2.4 + Math.random() * 1.8 + "s");
+        c.style.animationDelay = Math.random() * 0.8 + "s";
+        if (i % 3 === 0) c.style.borderRadius = "50%";
+        document.body.appendChild(c);
+        setTimeout(() => c.remove(), 5200);
+      }
+    }
+
+    // Birthday greetings (once a day)
+    function celebrate() {
+      const d = new Date(), today = (b) => d.getMonth() + 1 === b.month && d.getDate() === b.day;
+      let msg = null;
+      if (today(RICK_BIRTHDAY)) msg = "🎂 Happy birthday, Rick!";
+      else if (today(MOM_BIRTHDAY)) msg = "🎂 It's " + MOM_NAME + "'s birthday! Send some love ❤️";
+      if (!msg) return;
+      try { if (localStorage.getItem("mc-celebrated") === d.toDateString()) return; localStorage.setItem("mc-celebrated", d.toDateString()); } catch (e) {}
+      setTimeout(() => { toast(msg, 6000); confetti(); momFx("bounce"); }, 800);
+    }
+
+    // ----- messages -----
+    const messages = new Map(); // id -> { id, from: "mom" | "rick", time, text, title, emoji, urgent, click, attachment }
+    let loaded = false;
+
+    function clockTime(t) {
+      const d = new Date(t), now = new Date();
+      const time = d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+      return d.toDateString() === now.toDateString() ? "Today " + time : d.toLocaleDateString([], { weekday: "short" }) + " " + time;
+    }
+
+    function render() {
+      const chat = $("chat");
+      const list = [...messages.values()].sort((a, b) => a.time - b.time);
+      chat.innerHTML = "";
+      if (!list.length) {
+        const empty = el("div", "empty");
+        empty.append(el("div", "big", "💬"), el("div", null, loaded ? "No messages from " + MOM_NAME + " in the last 12 hours." : "Loading messages…"));
+        chat.appendChild(empty);
+        return;
+      }
+      let prev = null;
+      list.forEach((m, i) => {
+        if (!prev || m.time - prev.time > 30 * 60 * 1000) chat.appendChild(el("div", "stamp", clockTime(m.time)));
+        const row = el("div", "row " + (m.from === "mom" ? "mom-msg" : "rick") + (m.urgent ? " urgent" : ""));
+        if (prev && prev.from !== m.from) row.classList.add("gap");
+        row.style.animationDelay = Math.max(0, i - list.length + 10) * 30 + "ms";
+        const b = el("div", "bubble");
+        if (m.from === "mom" && m.title) b.appendChild(el("small", null, m.title));
+        b.appendChild(el("div", null, (m.emoji ? m.emoji + " " : "") + m.text));
+        if (m.click) {
+          const a = el("a", "act", "📍 Open map");
+          a.href = m.click; a.target = "_blank"; a.rel = "noopener";
+          b.appendChild(a);
+        }
+        if (m.attachment && /audio|wav|mp3/i.test((m.attachment.type || "") + m.attachment.url)) {
+          const p = el("button", "act", "▶️ Play it");
+          p.addEventListener("click", () => {
+            const fail = () => toast("Couldn't play the sound");
+            try { new Audio(m.attachment.url).play().catch(fail); } catch (e) { fail(); }
+          });
+          b.appendChild(p);
+        }
+        row.appendChild(b);
+        chat.appendChild(row);
+        prev = m;
+      });
+      requestAnimationFrame(() => { chat.scrollTop = chat.scrollHeight; });
+    }
+
+    function addMessage(msg, from) {
+      if (!msg || msg.event !== "message" || messages.has(msg.id)) return false;
+      const text = (msg.message || "").replace(/\nTap the attachment to hear it\.$/, "");
+      const emoji = from === "mom" ? (msg.tags || []).map((t) => TAG_EMOJI[t]).find(Boolean) : QUICK_EMOJI[text.trim()];
+      messages.set(msg.id, {
+        id: msg.id, from, time: (msg.time || Date.now() / 1000) * 1000, text, title: msg.title, emoji,
+        urgent: from === "mom" && msg.priority >= 5, click: msg.click, attachment: msg.attachment,
+      });
+      return true;
+    }
+
+    // ----- live connection to both topics -----
+    const streams = {};
+    function connect() {
+      for (const [topic, from] of [[NTFY_TOPIC, "mom"], [REPLY_TOPIC, "rick"]]) {
+        if (streams[topic]) streams[topic].close();
+        const es = new EventSource(`https://ntfy.sh/${topic}/sse?since=12h`);
+        es.onopen = () => { $("live").classList.add("on"); $("status").textContent = "Messages from " + MOM_NAME; setTimeout(() => { loaded = true; render(); }, 600); };
+        es.onerror = () => { $("live").classList.remove("on"); $("status").textContent = "Reconnecting…"; };
+        es.onmessage = (e) => {
+          let msg;
+          try { msg = JSON.parse(e.data); } catch (err) { return; }
+          if (!addMessage(msg, from)) return;
+          render();
+          // a brand new message from Mom (not one loaded from earlier)
+          if (from === "mom" && loaded && Date.now() - msg.time * 1000 < 60000) {
+            const urgent = msg.priority >= 5;
+            momFx(urgent ? "shake" : "bounce");
+            chime(urgent ? [[880, 0], [660, 0.15], [880, 0.3], [660, 0.45]] : [[659.3, 0], [987.8, 0.1]]);
+            try { navigator.vibrate && navigator.vibrate(urgent ? [200, 100, 200] : 30); } catch (err) {}
+            document.body.classList.toggle("urgent", urgent);
+            if (urgent) setTimeout(() => document.body.classList.remove("urgent"), 6000);
+          }
+        };
+        streams[topic] = es;
+      }
+    }
+
+    // ----- replying -----
+    async function reply(text) {
+      text = text.trim();
+      if (!text) return;
+      unlockAudio();
+      try {
+        const res = await fetch("https://ntfy.sh/" + REPLY_TOPIC, { method: "POST", body: text });
+        if (!res.ok) throw new Error(res.status);
+        const sent = await res.json();
+        addMessage(sent, "rick");
+        render();
+        chime([[880, 0], [1318.5, 0.09]]);
+        toast(text === "Sending one back" ? "💨 Fart sent to " + MOM_NAME + "!" : "Sent to " + MOM_NAME);
+      } catch (e) {
+        toast("Didn't send. Check your internet.");
+      }
+    }
+
+    QUICK.forEach((q) => {
+      const c = el("button", "chip glass", (QUICK_EMOJI[q] ? QUICK_EMOJI[q] + " " : "") + q);
+      c.addEventListener("click", () => reply(q));
+      $("quick").appendChild(c);
+    });
+    const input = $("text");
+    input.addEventListener("input", () => $("send").classList.toggle("ready", input.value.trim().length > 0));
+    $("compose").addEventListener("submit", (e) => {
+      e.preventDefault();
+      const t = input.value;
+      input.value = "";
+      $("send").classList.remove("ready");
+      reply(t);
+    });
+
+    // Opened from the "Type a reply" button on a notification: get the reply box ready
+    function readyToReply() {
+      if (location.hash !== "#reply") return;
+      input.focus();
+      try { history.replaceState(null, "", location.pathname); } catch (e) {} // tidy the address bar
+    }
+    window.addEventListener("hashchange", readyToReply);
+
+    document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") connect(); });
+    render();
+    connect();
+    celebrate();
+    readyToReply();
+  </script>
+</body>
+</html>
